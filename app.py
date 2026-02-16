@@ -4,6 +4,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
+# ---------- INICIALIZAR BASE DE DATOS ----------
 def init_db():
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
@@ -40,11 +41,13 @@ def init_db():
 
 init_db()
 
+# ---------- PÁGINA PRINCIPAL ----------
 @app.route("/")
 def home():
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
 
+    # Obtener datos básicos
     c.execute("SELECT * FROM sucursales")
     sucursales = c.fetchall()
 
@@ -60,10 +63,10 @@ def home():
     """)
     lavados = c.fetchall()
 
-    total = sum(l[2] for l in lavados)
-        # Total por sucursal
-    conn = sqlite3.connect("database.db")
-    c = conn.cursor()
+    # Total general
+    total_general = sum(l[2] for l in lavados)
+
+    # Total por sucursal
     c.execute("""
     SELECT sucursales.nombre, SUM(lavados.precio)
     FROM lavados
@@ -71,12 +74,19 @@ def home():
     GROUP BY sucursales.nombre
     """)
     totales_sucursal = c.fetchall()
+
+    # Total por empleado
+    c.execute("""
+    SELECT empleados.nombre, SUM(lavados.precio)
+    FROM lavados
+    JOIN empleados ON lavados.empleado_id = empleados.id
+    GROUP BY empleados.nombre
+    """)
+    totales_empleado = c.fetchall()
+
     conn.close()
 
-
-    conn.close()
-
-    html = "<h1>Autolavado Pro 🚗</h1>"
+    html = "<h1>Autolavado Pro 🚗💰</h1>"
 
     html += """
     <a href='/nueva_sucursal'>➕ Nueva Sucursal</a> |
@@ -84,6 +94,7 @@ def home():
     <hr>
     """
 
+    # ---------- FORMULARIO LAVADO ----------
     html += """
     <h2>Registrar lavado</h2>
     <form method="POST" action="/nuevo_lavado">
@@ -105,24 +116,31 @@ def home():
 
     html += "</select><br><br><button type='submit'>Guardar</button></form>"
 
+    # ---------- HISTORIAL ----------
     html += "<h2>Historial</h2><ul>"
 
     for l in lavados:
         html += f"<li>{l[0]} - {l[1]} - ${l[2]} - {l[3]} - {l[4]}</li>"
 
     html += "</ul>"
-    html += f"<h3>Total generado: ${total}</h3>"
-        html += "<h2>Ingresos por Sucursal</h2><ul>"
 
+    # ---------- TOTALES ----------
+    html += f"<h3>Total General: ${total_general}</h3>"
+
+    html += "<h2>Ingresos por Sucursal</h2><ul>"
     for s in totales_sucursal:
         html += f"<li>{s[0]}: ${s[1]}</li>"
-
     html += "</ul>"
 
+    html += "<h2>Ingresos por Empleado</h2><ul>"
+    for e in totales_empleado:
+        html += f"<li>{e[0]}: ${e[1]}</li>"
+    html += "</ul>"
 
     return html
 
 
+# ---------- CREAR SUCURSAL ----------
 @app.route("/nueva_sucursal", methods=["GET", "POST"])
 def nueva_sucursal():
     if request.method == "POST":
@@ -143,6 +161,7 @@ def nueva_sucursal():
     """
 
 
+# ---------- CREAR EMPLEADO ----------
 @app.route("/nuevo_empleado", methods=["GET", "POST"])
 def nuevo_empleado():
     conn = sqlite3.connect("database.db")
@@ -177,6 +196,7 @@ def nuevo_empleado():
     return html
 
 
+# ---------- REGISTRAR LAVADO ----------
 @app.route("/nuevo_lavado", methods=["POST"])
 def nuevo_lavado():
     cliente = request.form["cliente"]
