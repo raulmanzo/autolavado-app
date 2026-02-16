@@ -8,7 +8,6 @@ def init_db():
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
 
-    # Tabla de sucursales
     c.execute("""
     CREATE TABLE IF NOT EXISTS sucursales (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,7 +15,6 @@ def init_db():
     )
     """)
 
-    # Tabla de empleados
     c.execute("""
     CREATE TABLE IF NOT EXISTS empleados (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,7 +23,6 @@ def init_db():
     )
     """)
 
-    # Tabla de lavados
     c.execute("""
     CREATE TABLE IF NOT EXISTS lavados (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,28 +40,11 @@ def init_db():
 
 init_db()
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/")
 def home():
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
 
-    if request.method == "POST":
-        cliente = request.form["cliente"]
-        auto = request.form["auto"]
-        precio = float(request.form["precio"])
-        empleado_id = int(request.form["empleado"])
-        sucursal_id = int(request.form["sucursal"])
-        fecha = datetime.now().strftime("%Y-%m-%d")
-
-        c.execute("""
-        INSERT INTO lavados (cliente, auto, precio, fecha, empleado_id, sucursal_id)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """, (cliente, auto, precio, fecha, empleado_id, sucursal_id))
-
-        conn.commit()
-        return redirect("/")
-
-    # Obtener datos
     c.execute("SELECT * FROM sucursales")
     sucursales = c.fetchall()
 
@@ -72,7 +52,8 @@ def home():
     empleados = c.fetchall()
 
     c.execute("""
-    SELECT lavados.cliente, lavados.auto, lavados.precio, empleados.nombre, sucursales.nombre
+    SELECT lavados.cliente, lavados.auto, lavados.precio,
+           empleados.nombre, sucursales.nombre
     FROM lavados
     JOIN empleados ON lavados.empleado_id = empleados.id
     JOIN sucursales ON lavados.sucursal_id = sucursales.id
@@ -86,8 +67,14 @@ def home():
     html = "<h1>Autolavado Pro 🚗</h1>"
 
     html += """
+    <a href='/nueva_sucursal'>➕ Nueva Sucursal</a> |
+    <a href='/nuevo_empleado'>➕ Nuevo Empleado</a>
+    <hr>
+    """
+
+    html += """
     <h2>Registrar lavado</h2>
-    <form method="POST">
+    <form method="POST" action="/nuevo_lavado">
         Cliente: <input name="cliente"><br><br>
         Auto: <input name="auto"><br><br>
         Precio: <input name="precio" type="number" step="0.01"><br><br>
@@ -115,6 +102,84 @@ def home():
     html += f"<h3>Total generado: ${total}</h3>"
 
     return html
+
+
+@app.route("/nueva_sucursal", methods=["GET", "POST"])
+def nueva_sucursal():
+    if request.method == "POST":
+        nombre = request.form["nombre"]
+        conn = sqlite3.connect("database.db")
+        c = conn.cursor()
+        c.execute("INSERT INTO sucursales (nombre) VALUES (?)", (nombre,))
+        conn.commit()
+        conn.close()
+        return redirect("/")
+
+    return """
+    <h2>Crear nueva sucursal</h2>
+    <form method="POST">
+        Nombre: <input name="nombre"><br><br>
+        <button type="submit">Guardar</button>
+    </form>
+    """
+
+
+@app.route("/nuevo_empleado", methods=["GET", "POST"])
+def nuevo_empleado():
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+
+    if request.method == "POST":
+        nombre = request.form["nombre"]
+        sucursal_id = request.form["sucursal"]
+        c.execute("INSERT INTO empleados (nombre, sucursal_id) VALUES (?, ?)",
+                  (nombre, sucursal_id))
+        conn.commit()
+        conn.close()
+        return redirect("/")
+
+    c.execute("SELECT * FROM sucursales")
+    sucursales = c.fetchall()
+    conn.close()
+
+    html = """
+    <h2>Crear nuevo empleado</h2>
+    <form method="POST">
+        Nombre: <input name="nombre"><br><br>
+        Sucursal:
+        <select name="sucursal">
+    """
+
+    for s in sucursales:
+        html += f"<option value='{s[0]}'>{s[1]}</option>"
+
+    html += "</select><br><br><button type='submit'>Guardar</button></form>"
+
+    return html
+
+
+@app.route("/nuevo_lavado", methods=["POST"])
+def nuevo_lavado():
+    cliente = request.form["cliente"]
+    auto = request.form["auto"]
+    precio = float(request.form["precio"])
+    empleado_id = int(request.form["empleado"])
+    sucursal_id = int(request.form["sucursal"])
+    fecha = datetime.now().strftime("%Y-%m-%d")
+
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+
+    c.execute("""
+    INSERT INTO lavados (cliente, auto, precio, fecha, empleado_id, sucursal_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, (cliente, auto, precio, fecha, empleado_id, sucursal_id))
+
+    conn.commit()
+    conn.close()
+
+    return redirect("/")
+
 
 if __name__ == "__main__":
     app.run()
