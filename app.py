@@ -30,15 +30,24 @@ def init_db():
     """)
 
     c.execute("""
+    CREATE TABLE IF NOT EXISTS paquetes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT,
+        precio REAL
+    )
+    """)
+
+    c.execute("""
     CREATE TABLE IF NOT EXISTS lavados (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        paquete_id INTEGER,
         precio REAL,
         empleado_id INTEGER,
         sucursal_id INTEGER
     )
     """)
 
-    # Crear admin por defecto si no existe
+    # Crear admin por defecto
     c.execute("SELECT * FROM usuarios WHERE username='admin'")
     if not c.fetchone():
         c.execute("""
@@ -85,9 +94,6 @@ def login():
     """
 
 
-# =========================
-# LOGOUT
-# =========================
 @app.route("/logout")
 def logout():
     session.clear()
@@ -117,8 +123,17 @@ def home():
         <form method="POST" action="/crear_sucursal">
             Nombre: <input name="nombre">
             <button type="submit">Crear</button>
-        </form>
-        <hr>
+        </form><hr>
+        """
+
+        # Crear paquete
+        html += """
+        <h2>Crear Paquete</h2>
+        <form method="POST" action="/crear_paquete">
+            Nombre: <input name="nombre">
+            Precio: <input name="precio">
+            <button type="submit">Crear</button>
+        </form><hr>
         """
 
         # Obtener sucursales
@@ -146,24 +161,35 @@ def home():
         html += """
             </select><br>
             <button type="submit">Crear</button>
-        </form>
-        <hr>
+        </form><hr>
         """
 
     # ================= REGISTRAR LAVADO =================
+    c.execute("SELECT id, nombre, precio FROM paquetes")
+    paquetes = c.fetchall()
+
     html += """
     <h2>Registrar Lavado</h2>
     <form method="POST" action="/agregar">
-        Precio: <input name="precio">
-        <button type="submit">Agregar</button>
-    </form>
-    <hr>
+        Paquete:
+        <select name="paquete_id">
+    """
+
+    for p in paquetes:
+        html += f"<option value='{p[0]}'>{p[1]} - ${p[2]}</option>"
+
+    html += """
+        </select>
+        <button type="submit">Registrar</button>
+    </form><hr>
     """
 
     # ================= HISTORIAL =================
     c.execute("""
-    SELECT lavados.id, lavados.precio, usuarios.username, sucursales.nombre
+    SELECT lavados.id, paquetes.nombre, lavados.precio,
+           usuarios.username, sucursales.nombre
     FROM lavados
+    JOIN paquetes ON lavados.paquete_id = paquetes.id
     JOIN usuarios ON lavados.empleado_id = usuarios.id
     JOIN sucursales ON lavados.sucursal_id = sucursales.id
     """)
@@ -173,42 +199,13 @@ def home():
     total_general = 0
 
     for l in lavados:
-        html += f"<li>ID {l[0]} - ${l[1]} - {l[2]} - {l[3]}</li>"
-        total_general += l[1]
+        html += f"<li>ID {l[0]} - {l[1]} - ${l[2]} - {l[3]} - {l[4]}</li>"
+        total_general += l[2]
 
     html += "</ul>"
     html += f"<h3>Total General: ${total_general}</h3><hr>"
 
-    # ================= TOTAL POR SUCURSAL =================
-    c.execute("""
-    SELECT sucursales.nombre, SUM(lavados.precio)
-    FROM lavados
-    JOIN sucursales ON lavados.sucursal_id = sucursales.id
-    GROUP BY sucursales.nombre
-    """)
-    totales_sucursal = c.fetchall()
-
-    html += "<h2>Ingresos por Sucursal</h2><ul>"
-    for t in totales_sucursal:
-        html += f"<li>{t[0]}: ${t[1]}</li>"
-    html += "</ul><hr>"
-
-    # ================= TOTAL POR EMPLEADO =================
-    c.execute("""
-    SELECT usuarios.username, SUM(lavados.precio)
-    FROM lavados
-    JOIN usuarios ON lavados.empleado_id = usuarios.id
-    GROUP BY usuarios.username
-    """)
-    totales_empleado = c.fetchall()
-
-    html += "<h2>Ingresos por Empleado</h2><ul>"
-    for t in totales_empleado:
-        html += f"<li>{t[0]}: ${t[1]}</li>"
-    html += "</ul>"
-
     conn.close()
-
     return html
 
 
@@ -221,13 +218,30 @@ def crear_sucursal():
         return redirect("/")
 
     nombre = request.form["nombre"]
-
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
     c.execute("INSERT INTO sucursales (nombre) VALUES (?)", (nombre,))
     conn.commit()
     conn.close()
+    return redirect("/")
 
+
+# =========================
+# CREAR PAQUETE
+# =========================
+@app.route("/crear_paquete", methods=["POST"])
+def crear_paquete():
+    if session.get("rol") != "admin":
+        return redirect("/")
+
+    nombre = request.form["nombre"]
+    precio = request.form["precio"]
+
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO paquetes (nombre, precio) VALUES (?, ?)", (nombre, precio))
+    conn.commit()
+    conn.close()
     return redirect("/")
 
 
@@ -252,7 +266,6 @@ def crear_usuario():
     """, (username, password, rol, sucursal_id))
     conn.commit()
     conn.close()
-
     return redirect("/")
 
 
@@ -264,19 +277,25 @@ def agregar():
     if "user_id" not in session:
         return redirect("/login")
 
-    precio = request.form["precio"]
+    paquete_id = request.form["paquete_id"]
     empleado_id = session["user_id"]
 
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
 
+    # Obtener precio del paquete
+    c.execute("SELECT precio FROM paquetes WHERE id=?", (paquete_id,))
+    precio = c.fetchone()[0]
+
+    # Obtener sucursal del empleado
     c.execute("SELECT sucursal_id FROM usuarios WHERE id=?", (empleado_id,))
-    sucursal = c.fetchone()
+    sucursal = c.fetchone()[0]
 
     c.execute("""
-        INSERT INTO lavados (precio, empleado_id, sucursal_id)
-        VALUES (?, ?, ?)
-    """, (precio, empleado_id, sucursal[0]))
+        INSERT INTO lavados (paquete_id, precio, empleado_id, sucursal_id)
+        VALUES (?, ?, ?, ?)
+    """, (paquete_id, precio, empleado_id, sucursal))
+
     conn.commit()
     conn.close()
 
