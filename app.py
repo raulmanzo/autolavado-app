@@ -61,6 +61,18 @@ def home():
     lavados = c.fetchall()
 
     total = sum(l[2] for l in lavados)
+        # Total por sucursal
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+    c.execute("""
+    SELECT sucursales.nombre, SUM(lavados.precio)
+    FROM lavados
+    JOIN sucursales ON lavados.sucursal_id = sucursales.id
+    GROUP BY sucursales.nombre
+    """)
+    totales_sucursal = c.fetchall()
+    conn.close()
+
 
     conn.close()
 
@@ -100,6 +112,13 @@ def home():
 
     html += "</ul>"
     html += f"<h3>Total generado: ${total}</h3>"
+        html += "<h2>Ingresos por Sucursal</h2><ul>"
+
+    for s in totales_sucursal:
+        html += f"<li>{s[0]}: ${s[1]}</li>"
+
+    html += "</ul>"
+
 
     return html
 
