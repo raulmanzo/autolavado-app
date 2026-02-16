@@ -114,7 +114,7 @@ def home():
     html = "<h1>Panel de Control</h1>"
     html += "<a href='/logout'>Cerrar sesión</a><hr>"
 
-    # ================= ADMIN =================
+    # ================= ADMIN ZONA =================
     if session["rol"] == "admin":
 
         # Crear sucursal
@@ -185,14 +185,29 @@ def home():
     """
 
     # ================= HISTORIAL =================
-    c.execute("""
-    SELECT lavados.id, paquetes.nombre, lavados.precio,
-           usuarios.username, sucursales.nombre
-    FROM lavados
-    JOIN paquetes ON lavados.paquete_id = paquetes.id
-    JOIN usuarios ON lavados.empleado_id = usuarios.id
-    JOIN sucursales ON lavados.sucursal_id = sucursales.id
-    """)
+
+    if session["rol"] == "admin":
+        c.execute("""
+        SELECT lavados.id, paquetes.nombre, lavados.precio,
+               usuarios.username, sucursales.nombre
+        FROM lavados
+        JOIN paquetes ON lavados.paquete_id = paquetes.id
+        JOIN usuarios ON lavados.empleado_id = usuarios.id
+        JOIN sucursales ON lavados.sucursal_id = sucursales.id
+        """)
+    else:
+        c.execute("""
+        SELECT lavados.id, paquetes.nombre, lavados.precio,
+               usuarios.username, sucursales.nombre
+        FROM lavados
+        JOIN paquetes ON lavados.paquete_id = paquetes.id
+        JOIN usuarios ON lavados.empleado_id = usuarios.id
+        JOIN sucursales ON lavados.sucursal_id = sucursales.id
+        WHERE lavados.sucursal_id = (
+            SELECT sucursal_id FROM usuarios WHERE id=?
+        )
+        """, (session["user_id"],))
+
     lavados = c.fetchall()
 
     html += "<h2>Historial</h2><ul>"
@@ -204,6 +219,37 @@ def home():
 
     html += "</ul>"
     html += f"<h3>Total General: ${total_general}</h3><hr>"
+
+    # ================= TOTALES SOLO ADMIN =================
+    if session["rol"] == "admin":
+
+        # Total por sucursal
+        c.execute("""
+        SELECT sucursales.nombre, SUM(lavados.precio)
+        FROM lavados
+        JOIN sucursales ON lavados.sucursal_id = sucursales.id
+        GROUP BY sucursales.nombre
+        """)
+        totales_sucursal = c.fetchall()
+
+        html += "<h2>Ingresos por Sucursal</h2><ul>"
+        for t in totales_sucursal:
+            html += f"<li>{t[0]}: ${t[1]}</li>"
+        html += "</ul><hr>"
+
+        # Total por empleado
+        c.execute("""
+        SELECT usuarios.username, SUM(lavados.precio)
+        FROM lavados
+        JOIN usuarios ON lavados.empleado_id = usuarios.id
+        GROUP BY usuarios.username
+        """)
+        totales_empleado = c.fetchall()
+
+        html += "<h2>Ingresos por Empleado</h2><ul>"
+        for t in totales_empleado:
+            html += f"<li>{t[0]}: ${t[1]}</li>"
+        html += "</ul>"
 
     conn.close()
     return html
@@ -283,11 +329,11 @@ def agregar():
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
 
-    # Obtener precio del paquete
+    # Precio del paquete
     c.execute("SELECT precio FROM paquetes WHERE id=?", (paquete_id,))
     precio = c.fetchone()[0]
 
-    # Obtener sucursal del empleado
+    # Sucursal del empleado
     c.execute("SELECT sucursal_id FROM usuarios WHERE id=?", (empleado_id,))
     sucursal = c.fetchone()[0]
 
@@ -298,7 +344,6 @@ def agregar():
 
     conn.commit()
     conn.close()
-
     return redirect("/")
 
 
