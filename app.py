@@ -1,5 +1,6 @@
 from flask import Flask, request, redirect, session
 import sqlite3
+import os
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
@@ -15,6 +16,10 @@ def get_db():
 # =========================
 # INICIALIZAR BASE
 # =========================
+# BORRAR BASE SI EXISTE (solo para limpiar bloqueo)
+if os.path.exists("database.db"):
+    os.remove("database.db")
+
 def init_db():
     conn = get_db()
     c = conn.cursor()
