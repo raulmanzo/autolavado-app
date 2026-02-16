@@ -1,8 +1,9 @@
-from flask import Flask, request, redirect
+from flask import Flask, request, redirect, session
 import sqlite3
 from datetime import datetime
 
 app = Flask(__name__)
+app.secret_key = "super_secret_key_cambiar"
 
 # ---------- INICIALIZAR BASE DE DATOS ----------
 def init_db():
@@ -17,9 +18,11 @@ def init_db():
     """)
 
     c.execute("""
-    CREATE TABLE IF NOT EXISTS empleados (
+    CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre TEXT,
+        username TEXT UNIQUE,
+        password TEXT,
+        rol TEXT,
         sucursal_id INTEGER
     )
     """)
@@ -31,7 +34,7 @@ def init_db():
         auto TEXT,
         precio REAL,
         fecha TEXT,
-        empleado_id INTEGER,
+        usuario_id INTEGER,
         sucursal_id INTEGER
     )
     """)
@@ -41,182 +44,142 @@ def init_db():
 
 init_db()
 
-# ---------- PÁGINA PRINCIPAL ----------
-@app.route("/")
-def home():
+# ---------- LOGIN ----------
+@app.route("/", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+
+        conn = sqlite3.connect("database.db")
+        c = conn.cursor()
+        c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (username, password))
+        user = c.fetchone()
+        conn.close()
+
+        if user:
+            session["user_id"] = user[0]
+            session["rol"] = user[3]
+            session["sucursal_id"] = user[4]
+            return redirect("/dashboard")
+        else:
+            return "Usuario o contraseña incorrectos"
+
+    return """
+    <h2>Login</h2>
+    <form method="POST">
+        Usuario: <input name="username"><br><br>
+        Contraseña: <input name="password" type="password"><br><br>
+        <button type="submit">Ingresar</button>
+    </form>
+    """
+
+# ---------- DASHBOARD ----------
+@app.route("/dashboard")
+def dashboard():
+    if "user_id" not in session:
+        return redirect("/")
+
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
 
-    # Obtener datos básicos
-    c.execute("SELECT * FROM sucursales")
-    sucursales = c.fetchall()
+    if session["rol"] == "admin":
+        c.execute("""
+        SELECT lavados.cliente, lavados.auto, lavados.precio, usuarios.username, sucursales.nombre
+        FROM lavados
+        JOIN usuarios ON lavados.usuario_id = usuarios.id
+        JOIN sucursales ON lavados.sucursal_id = sucursales.id
+        """)
+    else:
+        c.execute("""
+        SELECT lavados.cliente, lavados.auto, lavados.precio, usuarios.username, sucursales.nombre
+        FROM lavados
+        JOIN usuarios ON lavados.usuario_id = usuarios.id
+        JOIN sucursales ON lavados.sucursal_id = sucursales.id
+        WHERE lavados.usuario_id=?
+        """, (session["user_id"],))
 
-    c.execute("SELECT * FROM empleados")
-    empleados = c.fetchall()
-
-    c.execute("""
-    SELECT lavados.cliente, lavados.auto, lavados.precio,
-           empleados.nombre, sucursales.nombre
-    FROM lavados
-    JOIN empleados ON lavados.empleado_id = empleados.id
-    JOIN sucursales ON lavados.sucursal_id = sucursales.id
-    """)
     lavados = c.fetchall()
 
-    # Total general
-    total_general = sum(l[2] for l in lavados)
+    total = sum(l[2] for l in lavados)
 
-    # Total por sucursal
-    c.execute("""
-    SELECT sucursales.nombre, SUM(lavados.precio)
-    FROM lavados
-    JOIN sucursales ON lavados.sucursal_id = sucursales.id
-    GROUP BY sucursales.nombre
-    """)
-    totales_sucursal = c.fetchall()
+    html = "<h1>Dashboard Autolavado 🚗</h1>"
+    html += "<a href='/logout'>Cerrar sesión</a><hr>"
 
-    # Total por empleado
-    c.execute("""
-    SELECT empleados.nombre, SUM(lavados.precio)
-    FROM lavados
-    JOIN empleados ON lavados.empleado_id = empleados.id
-    GROUP BY empleados.nombre
-    """)
-    totales_empleado = c.fetchall()
-
-    conn.close()
-
-    html = "<h1>Autolavado Pro 🚗💰</h1>"
-
-    html += """
-    <a href='/nueva_sucursal'>➕ Nueva Sucursal</a> |
-    <a href='/nuevo_empleado'>➕ Nuevo Empleado</a>
-    <hr>
-    """
-
-    # ---------- FORMULARIO LAVADO ----------
     html += """
     <h2>Registrar lavado</h2>
     <form method="POST" action="/nuevo_lavado">
         Cliente: <input name="cliente"><br><br>
         Auto: <input name="auto"><br><br>
         Precio: <input name="precio" type="number" step="0.01"><br><br>
-
-        Empleado:
-        <select name="empleado">
-    """
-
-    for e in empleados:
-        html += f"<option value='{e[0]}'>{e[1]}</option>"
-
-    html += "</select><br><br>Sucursal:<select name='sucursal'>"
-
-    for s in sucursales:
-        html += f"<option value='{s[0]}'>{s[1]}</option>"
-
-    html += "</select><br><br><button type='submit'>Guardar</button></form>"
-
-    # ---------- HISTORIAL ----------
-    html += "<h2>Historial</h2><ul>"
-
-    for l in lavados:
-        html += f"<li>{l[0]} - {l[1]} - ${l[2]} - {l[3]} - {l[4]}</li>"
-
-    html += "</ul>"
-
-    # ---------- TOTALES ----------
-    html += f"<h3>Total General: ${total_general}</h3>"
-
-    html += "<h2>Ingresos por Sucursal</h2><ul>"
-    for s in totales_sucursal:
-        html += f"<li>{s[0]}: ${s[1]}</li>"
-    html += "</ul>"
-
-    html += "<h2>Ingresos por Empleado</h2><ul>"
-    for e in totales_empleado:
-        html += f"<li>{e[0]}: ${e[1]}</li>"
-    html += "</ul>"
-
-    return html
-
-
-# ---------- CREAR SUCURSAL ----------
-@app.route("/nueva_sucursal", methods=["GET", "POST"])
-def nueva_sucursal():
-    if request.method == "POST":
-        nombre = request.form["nombre"]
-        conn = sqlite3.connect("database.db")
-        c = conn.cursor()
-        c.execute("INSERT INTO sucursales (nombre) VALUES (?)", (nombre,))
-        conn.commit()
-        conn.close()
-        return redirect("/")
-
-    return """
-    <h2>Crear nueva sucursal</h2>
-    <form method="POST">
-        Nombre: <input name="nombre"><br><br>
         <button type="submit">Guardar</button>
     </form>
     """
 
+    html += "<h2>Historial</h2><ul>"
+    for l in lavados:
+        html += f"<li>{l[0]} - {l[1]} - ${l[2]} - {l[3]} - {l[4]}</li>"
+    html += "</ul>"
 
-# ---------- CREAR EMPLEADO ----------
-@app.route("/nuevo_empleado", methods=["GET", "POST"])
-def nuevo_empleado():
-    conn = sqlite3.connect("database.db")
-    c = conn.cursor()
+    html += f"<h3>Total generado: ${total}</h3>"
 
-    if request.method == "POST":
-        nombre = request.form["nombre"]
-        sucursal_id = request.form["sucursal"]
-        c.execute("INSERT INTO empleados (nombre, sucursal_id) VALUES (?, ?)",
-                  (nombre, sucursal_id))
-        conn.commit()
-        conn.close()
-        return redirect("/")
+    if session["rol"] == "admin":
+        c.execute("""
+        SELECT sucursales.nombre, SUM(lavados.precio)
+        FROM lavados
+        JOIN sucursales ON lavados.sucursal_id = sucursales.id
+        GROUP BY sucursales.nombre
+        """)
+        totales_sucursal = c.fetchall()
 
-    c.execute("SELECT * FROM sucursales")
-    sucursales = c.fetchall()
+        html += "<h2>Ingresos por Sucursal</h2><ul>"
+        for s in totales_sucursal:
+            html += f"<li>{s[0]}: ${s[1]}</li>"
+        html += "</ul>"
+
     conn.close()
-
-    html = """
-    <h2>Crear nuevo empleado</h2>
-    <form method="POST">
-        Nombre: <input name="nombre"><br><br>
-        Sucursal:
-        <select name="sucursal">
-    """
-
-    for s in sucursales:
-        html += f"<option value='{s[0]}'>{s[1]}</option>"
-
-    html += "</select><br><br><button type='submit'>Guardar</button></form>"
-
     return html
 
-
-# ---------- REGISTRAR LAVADO ----------
+# ---------- NUEVO LAVADO ----------
 @app.route("/nuevo_lavado", methods=["POST"])
 def nuevo_lavado():
+    if "user_id" not in session:
+        return redirect("/")
+
     cliente = request.form["cliente"]
     auto = request.form["auto"]
     precio = float(request.form["precio"])
-    empleado_id = int(request.form["empleado"])
-    sucursal_id = int(request.form["sucursal"])
     fecha = datetime.now().strftime("%Y-%m-%d")
 
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
 
     c.execute("""
-    INSERT INTO lavados (cliente, auto, precio, fecha, empleado_id, sucursal_id)
+    INSERT INTO lavados (cliente, auto, precio, fecha, usuario_id, sucursal_id)
     VALUES (?, ?, ?, ?, ?, ?)
-    """, (cliente, auto, precio, fecha, empleado_id, sucursal_id))
+    """, (cliente, auto, precio, fecha, session["user_id"], session["sucursal_id"]))
 
     conn.commit()
     conn.close()
 
+    return redirect("/dashboard")
+
+# ---------- CREAR USUARIO (SOLO ADMIN MANUALMENTE EN DB AL INICIO) ----------
+@app.route("/crear_admin")
+def crear_admin():
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+
+    c.execute("INSERT OR IGNORE INTO usuarios (username, password, rol, sucursal_id) VALUES ('admin', '1234', 'admin', 1)")
+    conn.commit()
+    conn.close()
+
+    return "Admin creado (usuario: admin, password: 1234)"
+
+# ---------- LOGOUT ----------
+@app.route("/logout")
+def logout():
+    session.clear()
     return redirect("/")
 
 
